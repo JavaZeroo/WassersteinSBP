@@ -130,3 +130,5 @@ def plot_precomputed_pdf(pdf_values: np.ndarray,
         fig.savefig(save_dir, bbox_inches='tight')
     
     return fig, ax
+
+# 为什么训练这么慢
