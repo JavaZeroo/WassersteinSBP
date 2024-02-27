@@ -81,7 +81,7 @@ class timeUnetPlusPlus(smp.UnetPlusPlus):
 
 
 class MLP(nn.Module):
-    def __init__(self, input_dim, output_dim, hidden_layers=2, hidden_dim=64, mean=None, std=None):
+    def __init__(self, input_dim, output_dim, hidden_layers=2, hidden_dim=64, act: nn.Module=nn.ReLU()):
         super(MLP, self).__init__()
         
         self.fcin = nn.Linear(input_dim, hidden_dim)
@@ -89,16 +89,14 @@ class MLP(nn.Module):
         for i in range(hidden_layers):
             self.fcs.append(nn.Sequential(nn.Linear(hidden_dim, hidden_dim),nn.BatchNorm1d(hidden_dim)))
         self.fcout = nn.Linear(hidden_dim, output_dim)
-        self.relu = nn.ReLU()
-        self.mean = mean
-        self.std = std
+        self.act = act
         
     def forward(self, x):
         ret = self.fcin(x)
-        ret = self.relu(ret)
+        ret = self.act(ret)
         for fc in self.fcs:
             ret = fc(ret)
-            ret = self.relu(ret)
+            ret = self.act(ret)
         ret = self.fcout(ret)
         return ret
     
