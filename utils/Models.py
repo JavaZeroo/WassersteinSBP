@@ -112,3 +112,31 @@ def get_model(args):
     model.to(args.device)
 
     return model
+    
+class LSTMModel(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim, layer_dim, dropout_prob=0.1):
+        super(LSTMModel, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.layer_dim = layer_dim
+        self.lstm = nn.LSTM(input_dim, hidden_dim, layer_dim, batch_first=True, dropout=dropout_prob)
+        self.fc1 = nn.Linear(hidden_dim, hidden_dim)  # 添加额外的全连接层
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(dropout_prob)
+        self.fc2 = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x, hidden):
+        out, hidden = self.lstm(x, hidden)
+        out = self.dropout(self.relu(self.fc1(out)))
+        out = self.fc2(out)
+        return out, hidden
+    
+
+
+if __name__ == "__main__":
+    model = LSTMModel(5, 2, 64, 16)
+    x = torch.randn(100, 1, 5)
+    hidden = None
+    output, hidden = model(x, hidden)
+    print(output.shape, hidden[0].shape, hidden[1].shape)
+    output, hidden = model(x, hidden)
+    print(output.shape, hidden[0].shape, hidden[1].shape)
