@@ -13,17 +13,17 @@ class ScoreNetwork(torch.nn.Module):
         self.net = MLP(2 * t_enc_dim,
                        layer_widths=decoder_layers +[x_dim],
                        activate_final = False,
-                       activation_fn=torch.nn.LeakyReLU())
+                       activation_fn=torch.nn.GELU())
 
         self.t_encoder = MLP(pos_dim,
                              layer_widths=encoder_layers +[t_enc_dim],
                              activate_final = False,
-                             activation_fn=torch.nn.LeakyReLU())
+                             activation_fn=torch.nn.GELU())
 
         self.x_encoder = MLP(x_dim,
                              layer_widths=encoder_layers +[t_enc_dim],
                              activate_final = False,
-                             activation_fn=torch.nn.LeakyReLU())
+                             activation_fn=torch.nn.GELU())
 
     def forward(self, x, t):
         if len(x.shape) == 1:
