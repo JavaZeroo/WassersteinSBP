@@ -81,8 +81,8 @@ print("Original samples: ", len(tgt_imgs_1), len(tgt_imgs_2))
 print("Filtered samples: ", n_samples)
 
 
-tgt_imgs_1, test_tgt_imgs_1 = tgt_imgs_1[:n_samples].unsqueeze(1), tgt_imgs_1[n_samples:test_samples].unsqueeze(1)
-tgt_imgs_2, test_tgt_imgs_2 = tgt_imgs_2[:n_samples].unsqueeze(1), tgt_imgs_2[n_samples:test_samples].unsqueeze(1)
+tgt_imgs_1, test_tgt_imgs_1 = tgt_imgs_1[:n_samples].unsqueeze(1), tgt_imgs_1[n_samples:n_samples+test_samples].unsqueeze(1)
+tgt_imgs_2, test_tgt_imgs_2 = tgt_imgs_2[:n_samples].unsqueeze(1), tgt_imgs_2[n_samples:n_samples+test_samples].unsqueeze(1)
 gauss_samples = torch.randn_like(tgt_imgs_1)
 
 
@@ -184,7 +184,11 @@ class BasicDataset(Dataset):
 from torch.utils.data import ConcatDataset
 from utils.unet import UNetModel
 model_list = []
-for pair in train_pair_list:
+
+# checkpoint_path = Path('/home/ljb/WassersteinSBP/experiments/gaussian2mnist')
+checkpoint_path = None
+
+for index, pair in enumerate(train_pair_list):
     src_id, tgt_id = pair
     src_dist, tgt_dist = dists[src_id],dists[tgt_id]
     ts, bridge_f, drift_f = gen_2d_data(src_dist, tgt_dist, epsilon=EPSILON, T=1/2)
@@ -195,7 +199,7 @@ for pair in train_pair_list:
     dataset2 = BasicDataset(ts, bridge_b, drift_b, 1)
     combined_dataset = ConcatDataset([dataset1, dataset2])
 
-    epochs = 5
+    epochs = 3
     batch_size = 512
     lr = 1e-3
 
@@ -247,21 +251,26 @@ for pair in train_pair_list:
     loss_fn = nn.MSELoss()
     loss_list = []
     print('='*10+'model'+'='*10)
-    print(model)
+    # print(model)
     print('='*10+'====='+'='*10)
-    
-    epoch_iterator = tqdm(range(epochs), desc="Training (lr: X)  (loss= X)", dynamic_ncols=True)
-    model.train()
-    for e in epoch_iterator:
-        now_loss = train(model ,train_dl, optimizer, scheduler, loss_fn, epoch_iterator)
-        loss_list.append(now_loss)
-        cur_lr = optimizer.param_groups[-1]['lr']
-        epoch_iterator.set_description("Training (lr: %2.5f)  (loss=%2.5f)" % (cur_lr, now_loss))
-    plt.figure()
-    plt.plot(loss_list)
-    plt.savefig(log_dir / f'loss_{src_id}_{tgt_id}.png')
-    plt.gca().cla()
-    epoch_iterator.close()
+    if checkpoint_path is not None:
+        laod_checkpoint_from = checkpoint_path / f"model_{index}.pt"
+        print(f'Load Checkpoint from {laod_checkpoint_from}')
+        model.load_state_dict(torch.load(laod_checkpoint_from))
+    else:
+        epoch_iterator = tqdm(range(epochs), desc="Training (lr: X)  (loss= X)", dynamic_ncols=True)
+        model.train()
+        for e in epoch_iterator:
+            now_loss = train(model ,train_dl, optimizer, scheduler, loss_fn, epoch_iterator)
+            loss_list.append(now_loss)
+            cur_lr = optimizer.param_groups[-1]['lr']
+            epoch_iterator.set_description("Training (lr: %2.5f)  (loss=%2.5f)" % (cur_lr, now_loss))
+        plt.figure()
+        plt.plot(loss_list)
+        plt.savefig(log_dir / f'loss_{src_id}_{tgt_id}.png')
+        plt.gca().cla()
+        epoch_iterator.close()
+        torch.save(model.state_dict(), log_dir / f"model_{index}.pt")
     model_list.append(model)
 plt.show()
 
@@ -294,9 +303,6 @@ def inference(model, test_ts, test_source_sample, test_num_samples, reverse=Fals
             pred_bridge[i+1, :] += diffusion
     return pred_bridge, pred_drift
 
-# save model_list for each model
-for i, model in enumerate(model_list):
-    torch.save(model, log_dir / f'model_{i}.pt')
 
 # 生成样本
 test_num_samples = test_samples
