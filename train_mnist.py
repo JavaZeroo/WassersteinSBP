@@ -81,10 +81,12 @@ print("Original samples: ", len(tgt_imgs_1), len(tgt_imgs_2))
 print("Filtered samples: ", n_samples)
 
 
-tgt_imgs_1, test_tgt_imgs_1 = tgt_imgs_1[:n_samples].unsqueeze(1), tgt_imgs_1[n_samples:n_samples+test_samples].unsqueeze(1)
-tgt_imgs_2, test_tgt_imgs_2 = tgt_imgs_2[:n_samples].unsqueeze(1), tgt_imgs_2[n_samples:n_samples+test_samples].unsqueeze(1)
-gauss_samples = torch.randn_like(tgt_imgs_1)
-
+train_tgt_imgs_1 =  tgt_imgs_1[:n_samples].unsqueeze(1)
+test_tgt_imgs_1 = tgt_imgs_1[n_samples:n_samples+test_samples].unsqueeze(1)
+train_tgt_imgs_2  = tgt_imgs_2[:n_samples].unsqueeze(1) 
+test_tgt_imgs_2 = tgt_imgs_2[n_samples:n_samples+test_samples].unsqueeze(1)
+gauss_samples = torch.randn_like(train_tgt_imgs_1)
+print(train_tgt_imgs_1.shape, train_tgt_imgs_2.shape, test_tgt_imgs_1.shape, test_tgt_imgs_2.shape)
 
 
 # 生成样本
@@ -93,7 +95,12 @@ gauss_samples = torch.randn_like(tgt_imgs_1)
 # Pn_samples = torch.Tensor(generate_s_curve_samples(n_samples, noise))
 
 
-dists = [gauss_samples, torch.mean(torch.stack([tgt_imgs_1, tgt_imgs_2]), dim=0), tgt_imgs_1, tgt_imgs_2]
+dists = [
+    gauss_samples, 
+    torch.mean(torch.stack([train_tgt_imgs_1, train_tgt_imgs_2]), dim=0), 
+    train_tgt_imgs_1, 
+    train_tgt_imgs_2
+    ]
 train_pair_list = [(0, 1), (1, 2), (1, 3)]
 fig,axs = plt.subplots(1, len(dists), figsize=(len(dists)*5, 5))
 for i in range(len(dists)):
@@ -185,8 +192,8 @@ from torch.utils.data import ConcatDataset
 from utils.unet import UNetModel
 model_list = []
 
-# checkpoint_path = Path('/home/ljb/WassersteinSBP/experiments/gaussian2mnist')
-checkpoint_path = None
+checkpoint_path = Path('/home/ljb/WassersteinSBP/experiments/gaussian2mnist')
+# checkpoint_path = None
 
 for index, pair in enumerate(train_pair_list):
     src_id, tgt_id = pair
@@ -277,26 +284,19 @@ plt.show()
 def inference(model, test_ts, test_source_sample, test_num_samples, reverse=False):
     model.eval()
     model.cpu()
-    # if reverse:
-    #     test_ts = test_ts.flip(0)
     test_ts = test_ts[:-1]
     sigma = SIGMA
-    # print(test_ts )
-    pred_bridge = torch.zeros(len(test_ts), test_num_samples, 1 , 28, 28)
+    pred_bridge = torch.zeros(len(test_ts), test_num_samples, 1, 28, 28)
     pred_drift = torch.zeros(len(test_ts)-1, test_num_samples, 1, 28, 28)
     pred_bridge[0, :] = test_source_sample
-    print(torch.sqrt(abs(test_ts[1] - test_ts[0])))
     with torch.no_grad():
-        for i in range(len(test_ts) - 1):
+        for i in tqdm(range(len(test_ts) - 1)):
             dt = abs(test_ts[i+1] - test_ts[i])
-            test_ts_reshaped = test_ts[i].reshape(-1, 1, 1).repeat(test_num_samples, 1, 1)
-            pred_bridge_reshaped = pred_bridge[i].reshape(-1, 1, pred_bridge.shape[-1])
             if reverse:
-                direction = torch.ones_like(test_ts_reshaped)
+                direction = torch.ones_like(test_ts[i:i+1])
             else:
-                direction = torch.zeros_like(test_ts_reshaped)
-            x = torch.concat([test_ts_reshaped, pred_bridge_reshaped, direction], axis=-1)
-            dydt = model(x[:,0] )
+                direction: torch.Tensor = torch.zeros_like(test_ts[i:i+1])
+            dydt = model(pred_bridge[i], test_ts[i:i+1], direction, None)
             diffusion = sigma * torch.sqrt(dt) * torch.randn(test_num_samples, 1, 28, 28)
             pred_drift[i, :] = dydt
             pred_bridge[i+1, :] = pred_bridge[i, :] + dydt * dt
@@ -306,7 +306,6 @@ def inference(model, test_ts, test_source_sample, test_num_samples, reverse=Fals
 
 # 生成样本
 test_num_samples = test_samples
-# test_P1_samples = generate_moons_samples(test_num_samples, noise)
 test_P2_samples = test_tgt_imgs_1
 test_P3_samples = test_tgt_imgs_2
 test_P1_samples = torch.randn_like(test_P2_samples)
