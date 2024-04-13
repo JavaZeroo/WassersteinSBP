@@ -132,7 +132,7 @@ def gen_2d_data(source_dist, target_dist, epsilon=EPSILON, T=1):
     return ts, bridge, drift
 
 
-def train(model, train_dl, optimizer, scheduler, loss_fn):
+def train(model, train_dl, optimizer, scheduler, loss_fn, epoch_iterator):
     losses = 0
     for training_data in train_dl:
         x = training_data['x'].to(device)
@@ -151,6 +151,8 @@ def train(model, train_dl, optimizer, scheduler, loss_fn):
             scheduler.step()
         optimizer.zero_grad()
         losses = loss.item()
+        cur_lr = optimizer.param_groups[-1]['lr']
+        epoch_iterator.set_description("Training (lr: %2.5f)  (loss=%2.5f)" % (cur_lr, losses))
         
     return losses
 
@@ -159,8 +161,8 @@ class BasicDataset(Dataset):
     def __init__(self, ts, bridge, drift, direction, status=None):
         # scaled_tensor = normalized_tensor * 2 - 1
         self.times = ts[:len(ts)-1].repeat(n_samples,)
-        self.positions = torch.cat(torch.split(bridge[:-1, :], 1, dim=1), dim=0)
-        self.scores = torch.cat(torch.split(drift[:-1, :], 1, dim=1), dim=0)
+        self.positions = torch.cat(torch.split(bridge[:-1, :], 1, dim=1), dim=0)[:, 0]
+        self.scores = torch.cat(torch.split(drift[:-1, :], 1, dim=1), dim=0)[:,0]
         self.direction = torch.Tensor([direction])
         self.status = status
         # self.raw_data = torch.concat([positions, scores], dim=-1)
@@ -251,7 +253,7 @@ for pair in train_pair_list:
     epoch_iterator = tqdm(range(epochs), desc="Training (lr: X)  (loss= X)", dynamic_ncols=True)
     model.train()
     for e in epoch_iterator:
-        now_loss = train(model ,train_dl, optimizer, scheduler, loss_fn)
+        now_loss = train(model ,train_dl, optimizer, scheduler, loss_fn, epoch_iterator)
         loss_list.append(now_loss)
         cur_lr = optimizer.param_groups[-1]['lr']
         epoch_iterator.set_description("Training (lr: %2.5f)  (loss=%2.5f)" % (cur_lr, now_loss))
