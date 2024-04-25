@@ -195,12 +195,13 @@ model_list = []
 
 checkpoint_path = Path('/home/ljb/WassersteinSBP/experiments/gaussian2mnist')
 # checkpoint_path = None
-continue_train = True
+# continue_train = True
+continue_train = False
 for index, pair in enumerate(train_pair_list):
     src_id, tgt_id = pair
     src_dist, tgt_dist = dists[src_id],dists[tgt_id]
-    ts, bridge_f, drift_f = gen_2d_data(src_dist, tgt_dist, epsilon=EPSILON, T=1/2)
-    ts, bridge_b, drift_b = gen_2d_data(tgt_dist, src_dist, epsilon=EPSILON, T=1/2)
+    ts, bridge_f, drift_f = gen_2d_data(src_dist, tgt_dist, epsilon=0.001, T=1/2)
+    ts, bridge_b, drift_b = gen_2d_data(tgt_dist, src_dist, epsilon=0.001, T=1/2)
 
 
     dataset1 = BasicDataset(ts, bridge_f, drift_f, 0)
@@ -346,6 +347,25 @@ for chain in infer_chain:
     test_pred_drifts.append(drifts)
 
 
+def draw_comapre_split(dists, test_pred_bridges):
+    n_sub_interval = len(dists)-1
+    fig, axs = plt.subplots(1, n_sub_interval, figsize=(5*n_sub_interval, 5))
+
+    def plot_test_pred_bridges(sub_axs, data):
+        for i in range(n_sub_interval):
+            now = data[i][0, :] if i != n_sub_interval-1 else data[i-1][-1, :]
+            combined_image = torch.cat([torch.cat([now[j, 0] for j in range(k, k+5)], dim=1) for k in range(0, 25, 5)], dim=0)
+            sub_axs[i].imshow(combined_image, cmap='gray')
+    plot_test_pred_bridges(axs, test_pred_bridges)
+
+    # set tight layout
+    fig.tight_layout()
+    
+    # fig
+    fig.show()  
+    
+    return fig
+
 def draw_comapre(dists, test_pred_bridges, test_pred_bridges2, test_pred_bridges3, test_pred_bridges4, bound=12):
     n_sub_interval = len(dists)-1
     fig, axs = plt.subplots(4, n_sub_interval, figsize=(5*n_sub_interval, 20))
@@ -379,6 +399,8 @@ def draw_comapre(dists, test_pred_bridges, test_pred_bridges2, test_pred_bridges
     
 draw_comapre(dists, test_pred_bridges[0], test_pred_bridges[1], test_pred_bridges[2], test_pred_bridges[3]).savefig(log_dir / 'compare.png')
 
+for i in range(len(test_pred_bridges)):
+    draw_comapre_split(dists, test_pred_bridges[i]).savefig(log_dir / f'compare_{i}.png')
 
 import imageio
 import shutil
@@ -417,5 +439,6 @@ def save_gif_frame(bridge, save_path=None, name='brownian_bridge.gif', bound=10)
         shutil.rmtree(temp_dir)
 
 # save_gif_frame(test_pred_bridge_one_step, log_dir, name="pred_ring2s_one_step.gif", bound=15)
-for i, test_pred_bridge in enumerate(test_pred_bridges):
-    save_gif_frame(torch.concat(test_pred_bridge, dim=0), log_dir, name=f"pred_{i}.gif", bound=15)
+
+# for i, test_pred_bridge in enumerate(test_pred_bridges):
+#     save_gif_frame(torch.concat(test_pred_bridge, dim=0), log_dir, name=f"pred_{i}.gif", bound=15)

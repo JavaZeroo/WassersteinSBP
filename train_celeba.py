@@ -57,7 +57,7 @@ female_indices = torch.where(celeba_ds.attr[:, 20] == 0)[0]
 # 根据索引创建子数据集
 male_dataset = torch.utils.data.Subset(celeba_ds, male_indices)
 female_dataset = torch.utils.data.Subset(celeba_ds, female_indices)
-tgt_imgs_1 = male_indices
+tgt_imgs_1 = male_dataset
 tgt_imgs_2 = female_dataset
 
 all_samples = min(len(tgt_imgs_1), len(tgt_imgs_2))
@@ -175,9 +175,9 @@ from utils.unet import UNetModel
 model_list = []
 
 checkpoint_path = Path('/home/ljb/WassersteinSBP/experiments/gaussian2celeba')
-continue_train = True
+# continue_train = True
 # checkpoint_path = None
-# continue_train = False
+continue_train = False
 for index, pair in enumerate(train_pair_list):
     image_size=64
     image_channels=3
@@ -300,7 +300,7 @@ test_num_samples = 25
 test_P2_samples = torch.concat([male_dataset[-i][0].unsqueeze(0) for i in range(test_num_samples)], dim=0)
 test_P3_samples = torch.concat([female_dataset[-i][0].unsqueeze(0) for i in range(test_num_samples)], dim=0)
 test_P1_samples = torch.randn_like(test_P2_samples)
-test_ts, test_bridge, test_drift = gen_2d_data(test_P1_samples, test_P2_samples, epsilon=EPSILON, T=1)
+test_ts, test_bridge, test_drift = gen_2d_data(test_P1_samples, test_P2_samples, epsilon=0.001, T=1)
 
 test_pred_bridges = []
 test_pred_drifts = []
@@ -403,5 +403,5 @@ def save_gif_frame(bridge, save_path=None, name='brownian_bridge.gif', bound=10)
         shutil.rmtree(temp_dir)
 
 # save_gif_frame(test_pred_bridge_one_step, log_dir, name="pred_ring2s_one_step.gif", bound=15)
-for i, test_pred_bridge in enumerate(test_pred_bridges):
-    save_gif_frame(torch.concat(test_pred_bridge, dim=0), log_dir, name=f"pred_{i}.gif", bound=15)
+# for i, test_pred_bridge in enumerate(test_pred_bridges):
+#     save_gif_frame(torch.concat(test_pred_bridge, dim=0), log_dir, name=f"pred_{i}.gif", bound=15)
