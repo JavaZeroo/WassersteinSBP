@@ -56,18 +56,18 @@ def generate_gaussian_samples(mean, cov, n_samples)->np.ndarray:
 def generate_swiss_roll_samples(n_samples, noise)->np.ndarray:
     s_curve_samples, _ = make_swiss_roll(n_samples, noise=noise,random_state=True, hole=False)
     # print(s_curve_samples.shape)
-    return s_curve_samples[:, ::2]
+    return s_curve_samples[:, ::2] / 4
 
 def generate_moons_samples(n_samples, noise)->np.ndarray:
     s_curve_samples, _ = make_moons(n_samples, noise=noise,random_state=True)
     # print(s_curve_samples.shape)
-    return s_curve_samples * 5
+    return s_curve_samples * 3
 
 # 生成S形曲线分布样本
 def generate_s_curve_samples(n_samples, noise)->np.ndarray:
     s_curve_samples, _ = make_s_curve(n_samples, noise=noise)
     # print(s_curve_samples.shape)
-    return s_curve_samples[:, ::2] * 3
+    return s_curve_samples[:, ::2] * 2
 
 # 计算线性插值
 def interpolate_samples(P1_samples, Pn_samples, i, n)->np.ndarray:
@@ -78,17 +78,22 @@ def interpolate_samples(P1_samples, Pn_samples, i, n)->np.ndarray:
 n_samples = 10000
 mean = [0, 0]
 cov = [[1, 0], [0, 1]]
-noise = 0.01
+noise = 0.0
 ti = 5
 
 # 生成样本
-P1_samples = torch.Tensor(generate_moons_samples(n_samples, noise))
 gauss_samples = torch.Tensor(generate_gaussian_samples(mean, cov, n_samples))
-Pn_samples = torch.Tensor(generate_s_curve_samples(n_samples, noise))
+P1_samples = torch.Tensor(generate_moons_samples(n_samples, noise))
+P2_samples = torch.Tensor(generate_s_curve_samples(n_samples, noise))
+P3_samples = torch.Tensor(generate_swiss_roll_samples(n_samples, noise))
 
 
-dists = [gauss_samples, torch.mean(torch.stack([P1_samples, Pn_samples]), dim=0), P1_samples, Pn_samples]
-train_pair_list = [(0, 1), (1, 2), (1, 3)]
+dists = [gauss_samples, P1_samples, P2_samples, P3_samples]
+train_pair_list = [
+    (0, 1), 
+    (0, 2), 
+    (0, 3),
+    ]
 fig,axs = plt.subplots(1, len(dists), figsize=(len(dists)*5, 5))
 for i in range(len(dists)):
     axs[i].scatter(dists[i][:, 0], dists[i][:, 1], alpha=0.5, s=1)
@@ -194,62 +199,70 @@ def train(model, train_dl, optimizer, scheduler, loss_fn):
         
     return losses
 
-
+checkpoint_path = Path('/home/ljb/WassersteinSBP/experiments/gaussian2d')
+# checkpoint_path = None
+continue_train = False
+# continue_train = True
 model_list = []
-for pair in train_pair_list:
-    src_id, tgt_id = pair
-    src_dist, tgt_dist = dists[src_id],dists[tgt_id]
-    ts, bridge_f, drift_f = gen_2d_data(src_dist, tgt_dist, epsilon=EPSILON, T=1/2)
-    ts, bridge_b, drift_b = gen_2d_data(tgt_dist, src_dist, epsilon=EPSILON, T=1/2)
-    # draw_gaussian2d(bridge,ts, show_rate=0.1)
+for index, pair in enumerate(train_pair_list):
+    model = MLP(input_dim=4, output_dim=2, hidden_layers=4, hidden_dim=64, act=nn.LeakyReLU()).to(device)
+    if checkpoint_path is not None and not continue_train:
+        laod_checkpoint_from = checkpoint_path / f"model_{index}.pt"
+        print(f'Load Checkpoint from {laod_checkpoint_from}')
+        model.load_state_dict(torch.load(laod_checkpoint_from))
+    else:
+        src_id, tgt_id = pair
+        src_dist, tgt_dist = dists[src_id],dists[tgt_id]
+        ts, bridge_f, drift_f = gen_2d_data(src_dist, tgt_dist, epsilon=EPSILON, T=1/2)
+        ts, bridge_b, drift_b = gen_2d_data(tgt_dist, src_dist, epsilon=EPSILON, T=1/2)
+        # draw_gaussian2d(bridge,ts, show_rate=0.1)
 
-    # start = torch.cat(torch.split(src_dist.repeat(len(ts)-1, 1, 1), 1, dim=1), dim=0)
-    times = ts[:len(ts)-1].repeat(n_samples, 1).reshape(-1, 1, 1)
-    direction_f = torch.zeros_like(times)
-    positions_f = torch.cat(torch.split(bridge_f[:-1, :], 1, dim=1), dim=0)
-    scores_f = torch.cat(torch.split(drift_f[:-1, :], 1, dim=1), dim=0)
-    raw_data_f = torch.concat([times, positions_f, direction_f, scores_f], dim=-1)
-    print(raw_data_f.shape)
-    
-    # times = ts[:len(ts)-1].repeat(n_samples, 1).reshape(-1, 1, 1)
-    direction_b = torch.ones_like(times)
-    positions_b = torch.cat(torch.split(bridge_b[:-1, :], 1, dim=1), dim=0)
-    scores_b = torch.cat(torch.split(drift_b[:-1, :], 1, dim=1), dim=0)
-    raw_data_b = torch.concat([times, positions_b, direction_b, scores_b], dim=-1)
-    print(raw_data_b.shape)
-    
-    raw_data = torch.concat([raw_data_f, raw_data_b], dim=0)
-    
-    epochs = 100
-    batch_size = 10000
-    lr = 1e-3
+        # start = torch.cat(torch.split(src_dist.repeat(len(ts)-1, 1, 1), 1, dim=1), dim=0)
+        times = ts[:len(ts)-1].repeat(n_samples, 1).reshape(-1, 1, 1)
+        direction_f = torch.zeros_like(times)
+        positions_f = torch.cat(torch.split(bridge_f[:-1, :], 1, dim=1), dim=0)
+        scores_f = torch.cat(torch.split(drift_f[:-1, :], 1, dim=1), dim=0)
+        raw_data_f = torch.concat([times, positions_f, direction_f, scores_f], dim=-1)
+        print(raw_data_f.shape)
+        
+        # times = ts[:len(ts)-1].repeat(n_samples, 1).reshape(-1, 1, 1)
+        direction_b = torch.ones_like(times)
+        positions_b = torch.cat(torch.split(bridge_b[:-1, :], 1, dim=1), dim=0)
+        scores_b = torch.cat(torch.split(drift_b[:-1, :], 1, dim=1), dim=0)
+        raw_data_b = torch.concat([times, positions_b, direction_b, scores_b], dim=-1)
+        print(raw_data_b.shape)
+        
+        raw_data = torch.concat([raw_data_f, raw_data_b], dim=0)
+        
+        epochs = 50
+        batch_size = 10000
+        lr = 1e-3
 
-    # 组合成data
-    train_ds = BBdataset(raw_data[:,0])
-    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=24)
-    # 3 128
-    model = MLP(input_dim=4, output_dim=2, hidden_layers=4, hidden_dim=256, act=nn.LeakyReLU()).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-    # scheduler = None
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs, eta_min=1e-6)
-    loss_fn = nn.MSELoss()
-    loss_list = []
-    print('='*10+'model'+'='*10)
-    print(model)
-    print('='*10+'====='+'='*10)
-    
-    epoch_iterator = tqdm(range(epochs), desc="Training (lr: X)  (loss= X)", dynamic_ncols=True)
-    model.train()
-    for e in epoch_iterator:
-        now_loss = train(model ,train_dl, optimizer, scheduler, loss_fn)
-        loss_list.append(now_loss)
-        cur_lr = optimizer.param_groups[-1]['lr']
-        epoch_iterator.set_description("Training (lr: %2.5f)  (loss=%2.5f)" % (cur_lr, now_loss))
-    plt.figure()
-    plt.plot(loss_list)
-    plt.savefig(log_dir / f'loss_{src_id}_{tgt_id}.png')
-    plt.gca().cla()
-    epoch_iterator.close()
+        # 组合成data
+        train_ds = BBdataset(raw_data[:,0])
+        train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=24)
+        # 3 128
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+        # scheduler = None
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs, eta_min=1e-6)
+        loss_fn = nn.MSELoss()
+        loss_list = []
+        print('='*10+'model'+'='*10)
+        print(model)
+        print('='*10+'====='+'='*10)
+        
+        epoch_iterator = tqdm(range(epochs), desc="Training (lr: X)  (loss= X)", dynamic_ncols=True)
+        model.train()
+        for e in epoch_iterator:
+            now_loss = train(model ,train_dl, optimizer, scheduler, loss_fn)
+            loss_list.append(now_loss)
+            cur_lr = optimizer.param_groups[-1]['lr']
+            epoch_iterator.set_description("Training (lr: %2.5f)  (loss=%2.5f)" % (cur_lr, now_loss))
+        plt.figure()
+        plt.plot(loss_list)
+        plt.savefig(log_dir / f'loss_{src_id}_{tgt_id}.png')
+        plt.gca().cla()
+        epoch_iterator.close()
     model_list.append(model)
 plt.show()
 
@@ -264,7 +277,7 @@ def inference(model, test_ts, test_source_sample, test_num_samples, reverse=Fals
     pred_bridge = torch.zeros(len(test_ts), test_num_samples, 2)
     pred_drift = torch.zeros(len(test_ts)-1, test_num_samples, 2)
     pred_bridge[0, :] = test_source_sample
-    print(torch.sqrt(abs(test_ts[1] - test_ts[0])))
+    # print(torch.sqrt(abs(test_ts[1] - test_ts[0])))
     with torch.no_grad():
         for i in range(len(test_ts) - 1):
             dt = abs(test_ts[i+1] - test_ts[i])
@@ -284,7 +297,7 @@ def inference(model, test_ts, test_source_sample, test_num_samples, reverse=Fals
 
 # save model_list for each model
 for i, model in enumerate(model_list):
-    torch.save(model, log_dir / f'model_{i}.pt')
+    torch.save(model.state_dict(), log_dir / f'model_{i}.pt')
 
 # 生成样本
 test_num_samples = 1000
@@ -292,31 +305,37 @@ test_num_samples = 1000
 test_P1_samples = generate_gaussian_samples(mean, cov, test_num_samples)
 test_P2_samples = generate_moons_samples(test_num_samples, noise)
 test_P3_samples = generate_s_curve_samples(test_num_samples, noise)
-test_ts, test_bridge, test_drift = gen_2d_data(test_P1_samples, test_P2_samples, epsilon=EPSILON, T=1)
+test_ts, test_bridge, test_drift = gen_2d_data(test_P1_samples, test_P2_samples, epsilon=0.001, T=1/2)
 
 test_pred_bridges = []
 test_pred_drifts = []
 infer_chain = [
-    (0,2),
-    (0,1), 
-    (-1,2),
-    (-2,1)
+    (0,),
+    (1,),
+    (2,),
+    (1,-1,2,-2,0)
+    # (3,),
+    # (0,2),
+    # (0,1), 
+    # (-1,2),
+    # (-2,1)
     ]
 for chain in infer_chain:
     chain_out = []
     drifts = []
-    if chain[0] == 0:
-        temp_src = torch.Tensor(test_P1_samples)  
-    elif chain[0] == -1:
-        temp_src = torch.Tensor(test_P2_samples)
-    elif chain[0] == -2:
-        temp_src = torch.Tensor(test_P3_samples)
+    temp_src = torch.Tensor(test_P1_samples)  
+    # if chain[0] == 0:
+    # elif chain[0] == -1:
+    #     temp_src = torch.Tensor(test_P2_samples)
+    # elif chain[0] == -2:
+    #     temp_src = torch.Tensor(test_P3_samples)
         
         
     for i in chain:
         print(i)
         model = model_list[abs(i)]
-        pred_bridge, pred_drift = inference(model, test_ts[:len(test_ts)//len(chain)], temp_src, test_num_samples, reverse=i<0)
+        pred_bridge, pred_drift = inference(model, test_ts, temp_src, test_num_samples, reverse=i<0)
+        # print(pred_bridge)
         chain_out.append(pred_bridge)
         drifts.append(pred_bridge)
         temp_src = chain_out[-1][-1, :, :].clone()
@@ -330,8 +349,8 @@ len(test_pred_bridges), len(test_pred_drifts)
 #     draw_gaussian2d(p_bridge,ts, show_rate=0.1).show()
 # draw_gaussian2d_multi(test_pred_bridges[-1], test_ts, show_rate=0.1).show()
 
-def draw_comapre(dists, test_pred_bridges, test_pred_bridges2, test_pred_bridges3, test_pred_bridges4, bound=12):
-    n_sub_interval = len(dists)-1
+def draw_comapre(dists, test_pred_bridges, test_pred_bridges2, test_pred_bridges3, test_pred_bridges4, infer_chain, bound=12):
+    n_sub_interval = len(infer_chain[0])+1
     fig, axs = plt.subplots(4, n_sub_interval, figsize=(5*n_sub_interval, 20))
     show_rate = min(len(dists[0]), 2000) / len(dists[0])
 
@@ -344,8 +363,8 @@ def draw_comapre(dists, test_pred_bridges, test_pred_bridges2, test_pred_bridges
     colors = sns.color_palette("husl", n_sub_interval)
     
     def plot_test_pred_bridges(sub_axs, data):
-        for i in range(n_sub_interval):
-            now = data[i][0, :] if i != n_sub_interval-1 else data[i-1][-1, :]
+        for i in range(2):
+            now = data[i][0, :] if i != 1 else data[i-1][-1, :]
             sub_axs[i].scatter(*now.numpy().T, alpha=1, s=1, color=colors[i], label=labels[i])
             sub_axs[i].legend()
             sub_axs[i].set_xlim(-bound, bound)
@@ -361,8 +380,8 @@ def draw_comapre(dists, test_pred_bridges, test_pred_bridges2, test_pred_bridges
 
     plot_test_pred_bridges(axs[2], test_pred_bridges3)
     axs[2][0].set_ylabel('Chain 2 -> 1 -> 3')
-    plot_test_pred_bridges(axs[3], test_pred_bridges4)
-    axs[3][0].set_ylabel('Chain 3 -> 1 -> 2')
+    # plot_test_pred_bridges(axs[3], test_pred_bridges4)
+    # axs[3][0].set_ylabel('Chain 3 -> 1 -> 2')
 
     # set tight layout
     fig.tight_layout()
@@ -372,7 +391,7 @@ def draw_comapre(dists, test_pred_bridges, test_pred_bridges2, test_pred_bridges
     
     return fig
     
-draw_comapre(dists, test_pred_bridges[0], test_pred_bridges[1], test_pred_bridges[2], test_pred_bridges[3]).savefig(log_dir / 'compare.png')
+draw_comapre(dists, test_pred_bridges[0], test_pred_bridges[1], test_pred_bridges[2], None, infer_chain).savefig(log_dir / 'compare.png')
 
 
 import imageio
@@ -382,7 +401,7 @@ from rich.progress import track
 def save_gif_frame(bridge, save_path=None, name='brownian_bridge.gif', bound=10):
     assert save_path is not None, "save_path cannot be None"
     save_path = Path(save_path)
-    bridge = bridge[:, :, :].numpy()  # 降低采样率
+    bridge = bridge[::10, :, :].numpy()  # 降低采样率
 
     temp_dir = save_path / 'temp'
     if temp_dir.exists():
@@ -416,9 +435,11 @@ def save_gif_frame(bridge, save_path=None, name='brownian_bridge.gif', bound=10)
 
 # save_gif_frame(test_pred_bridge_one_step, log_dir, name="pred_ring2s_one_step.gif", bound=15)
 for i, test_pred_bridge in enumerate(test_pred_bridges):
-    if i in [0,1]:
+    if i in [0,1,2]:
         continue
-    save_gif_frame(torch.concat(test_pred_bridge, dim=0), log_dir, name=f"pred_{i}.gif", bound=15)
+    now = torch.concat(test_pred_bridge, dim=0)
+    print(now.shape)
+    save_gif_frame(now, log_dir, name=f"pred_{i}.gif", bound=8)
 # save_gif_frame(test_bridge, log_dir, name="linear_ring2s.gif", bound=15)
 
 

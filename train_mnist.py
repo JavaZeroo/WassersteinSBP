@@ -43,7 +43,7 @@ cost = np.power(cost, p)
 cost /= cost.max()
 
 SIGMA = 1 # 0.02
-EPSILON = 0.01
+EPSILON = 0.05
 
 mnist_ds = torchvision.datasets.MNIST(
     root="./data/", 
@@ -55,39 +55,39 @@ filter_number_1 = 8
 filter_number_2 = 3
 
 tgt_imgs_1 = []
-tgt_imgs_2 = []
+# tgt_imgs_2 = []
 # status = []
 for img, label in mnist_ds:
-    if label == filter_number_1:
-        tgt_imgs_1.append(torch.Tensor(np.array(img)))
-    elif label == filter_number_2:
-        tgt_imgs_2.append(torch.Tensor(np.array(img)))
+    tgt_imgs_1.append(torch.Tensor(np.array(img)))
+    # if label == filter_number_1:
+    # elif label == filter_number_2:
+    #     tgt_imgs_2.append(torch.Tensor(np.array(img)))
 print(len(tgt_imgs_1))
-print(len(tgt_imgs_2))
+# print(len(tgt_imgs_2))
 tgt_imgs_1 = torch.stack(tgt_imgs_1)
-tgt_imgs_2 = torch.stack(tgt_imgs_2)
+# tgt_imgs_2 = torch.stack(tgt_imgs_2)
 
 # normalize
-tgt_imgs_1 = (((tgt_imgs_1 - tgt_imgs_1.min()) / (tgt_imgs_1.max() - tgt_imgs_1.min())) * 2 - 1) * 10
-tgt_imgs_2 = (((tgt_imgs_2 - tgt_imgs_2.min()) / (tgt_imgs_2.max() - tgt_imgs_2.min())) * 2 - 1) * 10
+tgt_imgs_1 = ((tgt_imgs_1 - tgt_imgs_1.min()) / (tgt_imgs_1.max() - tgt_imgs_1.min())) * 2
+# tgt_imgs_2 = ((tgt_imgs_2 - tgt_imgs_2.min()) / (tgt_imgs_2.max() - tgt_imgs_2.min())) * 2
 
-all_samples = min(len(tgt_imgs_1), len(tgt_imgs_2))
+all_samples = len(tgt_imgs_1)
 n_samples = int(all_samples / 1000) * 1000
+n_samples = 1000
+indices = torch.randperm(all_samples)[:n_samples]
 
 # left sample used for test
 test_samples = all_samples - n_samples
 test_samples = int(test_samples / 100) * 100
 
-print("Original samples: ", len(tgt_imgs_1), len(tgt_imgs_2))
+print("Original samples: ", len(tgt_imgs_1))
 print("Filtered samples: ", n_samples)
 
 
-train_tgt_imgs_1 =  tgt_imgs_1[:n_samples].unsqueeze(1)
-test_tgt_imgs_1 = tgt_imgs_1[n_samples:n_samples+test_samples].unsqueeze(1)
-train_tgt_imgs_2  = tgt_imgs_2[:n_samples].unsqueeze(1) 
-test_tgt_imgs_2 = tgt_imgs_2[n_samples:n_samples+test_samples].unsqueeze(1)
+train_tgt_imgs_1 =  tgt_imgs_1[indices].unsqueeze(1)
+test_tgt_imgs_1 = tgt_imgs_1[-test_samples:].unsqueeze(1)
+
 gauss_samples = torch.randn_like(train_tgt_imgs_1)
-print(train_tgt_imgs_1.shape, train_tgt_imgs_2.shape, test_tgt_imgs_1.shape, test_tgt_imgs_2.shape)
 
 
 # 生成样本
@@ -98,11 +98,11 @@ print(train_tgt_imgs_1.shape, train_tgt_imgs_2.shape, test_tgt_imgs_1.shape, tes
 
 dists = [
     gauss_samples, 
-    torch.mean(torch.stack([train_tgt_imgs_1, train_tgt_imgs_2]), dim=0), 
+    # torch.mean(torch.stack([train_tgt_imgs_1, train_tgt_imgs_2]), dim=0), 
     train_tgt_imgs_1, 
-    train_tgt_imgs_2
+    # train_tgt_imgs_2
     ]
-train_pair_list = [(0, 1), (1, 2), (1, 3)]
+train_pair_list = [(0, 1)]
 fig,axs = plt.subplots(1, len(dists), figsize=(len(dists)*5, 5))
 for i in range(len(dists)):
     axs[i].imshow(dists[i][0][0])
@@ -192,6 +192,23 @@ class BasicDataset(Dataset):
 from torch.utils.data import ConcatDataset
 from utils.unet import UNetModel
 model_list = []
+import gc
+def get_dl(src_id, tgt_id, dists, batch_size):
+    src_dist, tgt_dist = torch.Tensor(dists[src_id]),torch.Tensor(dists[tgt_id])
+    gc.collect()
+    
+    print("Generate Forward Data")
+    ts, bridge_f, drift_f = gen_2d_data(src_dist, tgt_dist, epsilon=EPSILON, T=1/2)
+    print("Generate Backward Data")
+    ts, bridge_b, drift_b = gen_2d_data(tgt_dist, src_dist, epsilon=EPSILON, T=1/2)
+
+    print(ts.shape, bridge_f.shape, drift_f.shape)
+    dataset1 = BasicDataset(ts, bridge_f, drift_f, 0)
+    dataset2 = BasicDataset(ts, bridge_b, drift_b, 1)
+    combined_dataset = ConcatDataset([dataset1, dataset2])
+
+    train_dl = DataLoader(combined_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=2)
+    return train_dl
 
 checkpoint_path = Path('/home/ljb/WassersteinSBP/experiments/gaussian2mnist')
 # checkpoint_path = None
@@ -199,16 +216,8 @@ checkpoint_path = Path('/home/ljb/WassersteinSBP/experiments/gaussian2mnist')
 continue_train = False
 for index, pair in enumerate(train_pair_list):
     src_id, tgt_id = pair
-    src_dist, tgt_dist = dists[src_id],dists[tgt_id]
-    ts, bridge_f, drift_f = gen_2d_data(src_dist, tgt_dist, epsilon=0.001, T=1/2)
-    ts, bridge_b, drift_b = gen_2d_data(tgt_dist, src_dist, epsilon=0.001, T=1/2)
 
-
-    dataset1 = BasicDataset(ts, bridge_f, drift_f, 0)
-    dataset2 = BasicDataset(ts, bridge_b, drift_b, 1)
-    combined_dataset = ConcatDataset([dataset1, dataset2])
-
-    epochs = 3
+    epochs = 100
     batch_size = 512
     lr = 1e-3
 
@@ -220,7 +229,7 @@ for index, pair in enumerate(train_pair_list):
     num_res_blocks = 4
     num_heads = 4
     num_heads_upsample = -1
-    attention_resolutions = "168"
+    attention_resolutions = "8"
     dropout = 0.1
     use_checkpoint = False
     use_scale_shift_norm = True
@@ -248,8 +257,7 @@ for index, pair in enumerate(train_pair_list):
     model = UNetModel(**kwargs).to(device)
     # 组合成data
     # train_ds = BBdataset(raw_data[:,0])
-    train_dl = DataLoader(combined_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=24)
-    batch = next(train_dl.__iter__())
+    refresh_rate = 3
     # for k,v in batch.items():
     #     print(k, v.shape)
     # 3 128
@@ -274,6 +282,8 @@ for index, pair in enumerate(train_pair_list):
         epoch_iterator = tqdm(range(epochs), desc="Training (lr: X)  (loss= X)", dynamic_ncols=True)
         model.train()
         for e in epoch_iterator:
+            if e == 0 or (refresh_rate != 0 and e%refresh_rate==0):
+                train_dl = get_dl(src_id, tgt_id, dists, batch_size)
             now_loss = train(model ,train_dl, optimizer, scheduler, loss_fn, epoch_iterator)
             loss_list.append(now_loss)
             cur_lr = optimizer.param_groups[-1]['lr']
@@ -312,57 +322,65 @@ def inference(model, test_ts, test_source_sample, test_num_samples, reverse=Fals
 
 # 生成样本
 test_num_samples = 25
-test_P2_samples = test_tgt_imgs_1[:test_num_samples]
-test_P3_samples = test_tgt_imgs_2[:test_num_samples]
+test_P2_samples = test_tgt_imgs_1[25:test_num_samples+25]
+# test_P3_samples = test_tgt_imgs_2[:test_num_samples]
 test_P1_samples = torch.randn_like(test_P2_samples)
-test_ts, test_bridge, test_drift = gen_2d_data(test_P1_samples, test_P2_samples, epsilon=EPSILON, T=1)
+test_ts, test_bridge, test_drift = gen_2d_data(test_P1_samples, test_P2_samples, epsilon=0.01, T=1)
 
 test_pred_bridges = []
 test_pred_drifts = []
 infer_chain = [
-    (0,2),
-    (0,1), 
-    (-1,2),
-    (-2,1)
+    (0,)
+    # (0,2),
+    # (0,1), 
+    # (-1,2),
+    # (-2,1)
     ]
-for chain in infer_chain:
-    chain_out = []
-    drifts = []
-    if chain[0] == 0:
-        temp_src = torch.Tensor(test_P1_samples)  
-    elif chain[0] == -1:
-        temp_src = torch.Tensor(test_P2_samples)
-    elif chain[0] == -2:
-        temp_src = torch.Tensor(test_P3_samples)
+# for chain in infer_chain:
+#     chain_out = []
+#     drifts = []
+#     if chain[0] == 0:
+#         temp_src = torch.Tensor(test_P1_samples)  
+#     elif chain[0] == -1:
+#         temp_src = torch.Tensor(test_P2_samples)
+#     elif chain[0] == -2:
+#         temp_src = torch.Tensor(test_P3_samples)
         
         
-    for i in chain:
-        print(i)
-        model = model_list[abs(i)]
-        pred_bridge, pred_drift = inference(model, test_ts[:len(test_ts)//len(chain)], temp_src, test_num_samples, reverse=i<0)
-        chain_out.append(pred_bridge)
-        drifts.append(pred_bridge)
-        temp_src = chain_out[-1][-1, :, :].clone()
-    test_pred_bridges.append(chain_out)
-    test_pred_drifts.append(drifts)
+#     for i in chain:
+#         print(i)
+#         model = model_list[abs(i)]
+#         pred_bridge, pred_drift = inference(model, test_ts[:len(test_ts)//len(chain)], temp_src, test_num_samples, reverse=i<0)
+#         chain_out.append(pred_bridge)
+#         drifts.append(pred_bridge)
+#         temp_src = chain_out[-1][-1, :, :].clone()
+#     test_pred_bridges.append(chain_out)
+#     test_pred_drifts.append(drifts)
 
 
-def draw_comapre_split(dists, test_pred_bridges):
-    n_sub_interval = len(dists)-1
+def draw_comapre_split(test_pred_bridges):
+    n_sub_interval = len(test_pred_bridges)+1
+    print(n_sub_interval)
     fig, axs = plt.subplots(1, n_sub_interval, figsize=(5*n_sub_interval, 5))
-
+    print(axs.shape)
     def plot_test_pred_bridges(sub_axs, data):
         for i in range(n_sub_interval):
             now = data[i][0, :] if i != n_sub_interval-1 else data[i-1][-1, :]
-            combined_image = torch.cat([torch.cat([now[j, 0] for j in range(k, k+5)], dim=1) for k in range(0, 25, 5)], dim=0)
-            sub_axs[i].imshow(combined_image, cmap='gray')
+            combined_image = torch.cat([torch.cat([now[j] for j in range(k, k+5)], dim=2) for k in range(0, 25, 5)], dim=1)
+            combined_image = (combined_image-combined_image.min())/(combined_image.max()-combined_image.min())
+            # combined_image[combined_image<0.3] = 0
+            # combined_image[combined_image>0.7] = 1
+            
+            # combined_image = (combined_image-combined_image.min())/(combined_image.max()-combined_image.min())
+            sub_axs[i].imshow(combined_image.permute(1,2,0).numpy(), cmap='gray')
+            
     plot_test_pred_bridges(axs, test_pred_bridges)
 
     # set tight layout
     fig.tight_layout()
     
     # fig
-    fig.show()  
+    fig.show()
     
     return fig
 
@@ -397,10 +415,10 @@ def draw_comapre(dists, test_pred_bridges, test_pred_bridges2, test_pred_bridges
     
     return fig
     
-draw_comapre(dists, test_pred_bridges[0], test_pred_bridges[1], test_pred_bridges[2], test_pred_bridges[3]).savefig(log_dir / 'compare.png')
+# draw_comapre(dists, test_pred_bridges[0], test_pred_bridges[1], test_pred_bridges[2], test_pred_bridges[3]).savefig(log_dir / 'compare.png')
 
-for i in range(len(test_pred_bridges)):
-    draw_comapre_split(dists, test_pred_bridges[i]).savefig(log_dir / f'compare_{i}.png')
+# for i in range(len(test_pred_bridges)):
+#     draw_comapre_split(test_pred_bridges[i]).savefig(log_dir / f'compare_{i}.png')
 
 import imageio
 import shutil
@@ -438,7 +456,7 @@ def save_gif_frame(bridge, save_path=None, name='brownian_bridge.gif', bound=10)
     if temp_dir.exists():
         shutil.rmtree(temp_dir)
 
-# save_gif_frame(test_pred_bridge_one_step, log_dir, name="pred_ring2s_one_step.gif", bound=15)
+save_gif_frame(test_bridge, log_dir, name="pred_0.gif", bound=15)
 
 # for i, test_pred_bridge in enumerate(test_pred_bridges):
 #     save_gif_frame(torch.concat(test_pred_bridge, dim=0), log_dir, name=f"pred_{i}.gif", bound=15)

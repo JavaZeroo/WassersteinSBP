@@ -8,16 +8,17 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm.auto import tqdm
 from pathlib import Path
 
-torch.manual_seed(233)
-np.random.seed(233)
+torch.manual_seed(8246)
+np.random.seed(8246)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
-image_size = 128
+image_size = 256
 # set gpu 0
 import os
+import gc
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-experiment_name = "gaussian2celeba_fangao"
+experiment_name = "gaussian2celeba_fangao_256"
 log_dir = Path('experiments') / experiment_name
 log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -62,14 +63,15 @@ cost = np.power(cost, p)
 cost /= cost.max()
 
 SIGMA = 1 # 0.02
-EPSILON = 0.02
+EPSILON = 0.05
 
 n_channels = 3
 
-real_path = Path("/home/ljb/pytorch-CycleGAN-and-pix2pix/results/style_vangogh_pretrained/test_latest/images/real")
-fake_path = Path("/home/ljb/pytorch-CycleGAN-and-pix2pix/results/style_vangogh_pretrained/test_latest/images/fake")
+real_path = Path("/home/ljb/pytorch-CycleGAN-and-pix2pix/results/style_ukiyoe_pretrained/test_latest/images/real")
+fake_path = Path("/home/ljb/pytorch-CycleGAN-and-pix2pix/results/style_ukiyoe_pretrained/test_latest/images/fake")
 real_names = []
 fake_names = [file.name for file in fake_path.glob("*.png")]
+fake_names = fake_names[-1000:]
 for img_name in real_path.glob("*.png"):
     if f"{img_name.stem}.png" in fake_names:
         real_names.append(img_name.stem)
@@ -92,16 +94,21 @@ train_nums = n_samples
 train_tgt_imgs_1 = torch.stack([real_dataset[i] for i in range(train_nums)], dim=0)
 train_tgt_imgs_2  = torch.stack([fake_dataset[i] for i in range(train_nums)], dim=0)
 gauss_samples = torch.randn_like(train_tgt_imgs_1)
-print(train_tgt_imgs_1[0].max())
-print(train_tgt_imgs_1[0].min())
+# print(train_tgt_imgs_1[0].max())
+# print(train_tgt_imgs_1[0].min())
 dists = [
     # gauss_samples, 
     # torch.mean(torch.stack([train_tgt_imgs_1, train_tgt_imgs_2]), dim=0), 
+    gauss_samples,
     train_tgt_imgs_1, 
-    train_tgt_imgs_2
+    train_tgt_imgs_2, 
     ]
 
-train_pair_list = [(0, 1)]
+train_pair_list = [
+    (0, 1),
+    # (0, 2),
+    ]
+
 fig,axs = plt.subplots(1, len(dists), figsize=(len(dists)*5, 5))
 for i in range(len(dists)):
     axs[i].imshow(dists[i][0].permute(1,2,0))
@@ -131,8 +138,8 @@ def gen_bridge_2d(x, y, ts, T, num_samples):
 
 def gen_2d_data(source_dist, target_dist, epsilon=EPSILON, T=1):
     ts = torch.arange(0, T+epsilon, epsilon)
-    source_dist = torch.Tensor(source_dist)
-    target_dist = torch.Tensor(target_dist)
+    # source_dist = torch.Tensor(source_dist)
+    # target_dist = torch.Tensor(target_dist)
     assert source_dist.shape == target_dist.shape
     num_samples = len(source_dist)
     bridge, drift = gen_bridge_2d(source_dist, target_dist, ts, T=T, num_samples=num_samples)
@@ -191,7 +198,7 @@ from torch.utils.data import ConcatDataset
 from utils.unet import UNetModel
 model_list = []
 
-checkpoint_path = Path('/home/ljb/WassersteinSBP/experiments/gaussian2celeba_fangao')
+checkpoint_path = Path('/home/ljb/WassersteinSBP/experiments/gaussian2celeba_fangao_256')
 # continue_train = True
 # checkpoint_path = None 
 continue_train = False
@@ -200,10 +207,10 @@ for index, pair in enumerate(train_pair_list):
     image_channels=3
     
     num_channels = 32
-    num_res_blocks = 4
+    num_res_blocks = 2
     num_heads = 4
     num_heads_upsample = -1
-    attention_resolutions = "168"
+    attention_resolutions = "64"
     dropout = 0.1
     use_checkpoint = False
     use_scale_shift_norm = True
@@ -236,8 +243,12 @@ for index, pair in enumerate(train_pair_list):
         model.load_state_dict(torch.load(laod_checkpoint_from))
     else:
         src_id, tgt_id = pair
-        src_dist, tgt_dist = dists[src_id],dists[tgt_id]
+        src_dist, tgt_dist = torch.Tensor(dists[src_id]),torch.Tensor(dists[tgt_id])
+        gc.collect()
+        
+        print("Generate Forward Data")
         ts, bridge_f, drift_f = gen_2d_data(src_dist, tgt_dist, epsilon=EPSILON, T=1/2)
+        print("Generate Backward Data")
         ts, bridge_b, drift_b = gen_2d_data(tgt_dist, src_dist, epsilon=EPSILON, T=1/2)
 
         print(ts.shape, bridge_f.shape, drift_f.shape)
@@ -245,8 +256,8 @@ for index, pair in enumerate(train_pair_list):
         dataset2 = BasicDataset(ts, bridge_b, drift_b, 1)
         combined_dataset = ConcatDataset([dataset1, dataset2])
 
-        epochs = 10
-        batch_size = 32
+        epochs = 20
+        batch_size = 2
         lr = 1e-3
 
         train_dl = DataLoader(combined_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=2)
@@ -280,7 +291,9 @@ for index, pair in enumerate(train_pair_list):
         plt.gca().cla()
         epoch_iterator.close()
         torch.save(model.state_dict(), log_dir / f"model_{index}.pt")
-        
+        del dataset1, dataset2, combined_dataset, ts, bridge_f, drift_f, bridge_b, drift_b
+        gc.collect()
+        torch.cuda.empty_cache()
     model_list.append(model)
 plt.show()
 
@@ -289,9 +302,9 @@ def inference(model, test_ts, test_source_sample, test_num_samples, reverse=Fals
     model.to(device)
     test_ts = test_ts[:-1]
     sigma = SIGMA
-    pred_bridge = torch.zeros(len(test_ts), test_num_samples, n_channels, image_size, image_size).to(device)
-    pred_drift = torch.zeros(len(test_ts)-1, test_num_samples, n_channels, image_size, image_size).to(device)
-    pred_bridge[0, :] = test_source_sample.to(device)
+    pred_bridge = torch.zeros(len(test_ts), test_num_samples, n_channels, image_size, image_size)
+    pred_drift = torch.zeros(len(test_ts)-1, test_num_samples, n_channels, image_size, image_size)
+    pred_bridge[0, :] = test_source_sample
     with torch.no_grad():
         for i in tqdm(range(len(test_ts) - 1)):
             dt = abs(test_ts[i+1] - test_ts[i])
@@ -299,19 +312,24 @@ def inference(model, test_ts, test_source_sample, test_num_samples, reverse=Fals
                 direction = torch.ones_like(test_ts[i:i+1])
             else:
                 direction: torch.Tensor = torch.zeros_like(test_ts[i:i+1])
-            dydt = model(pred_bridge[i].to(device), test_ts[i:i+1].to(device), direction.to(device), None)
-            diffusion = sigma * torch.sqrt(dt) * torch.randn(test_num_samples, n_channels, image_size, image_size).to(device)
+            dydt = model(pred_bridge[i].to(device), test_ts[i:i+1].to(device), direction.to(device), None).to('cpu')
+            diffusion = sigma * torch.sqrt(dt) * torch.randn(test_num_samples, n_channels, image_size, image_size)
             pred_drift[i, :] = dydt
             pred_bridge[i+1, :] = pred_bridge[i, :] + dydt * dt
             pred_bridge[i+1, :] += diffusion
-    return pred_bridge.to('cpu'), pred_drift.to('cpu')
+    return pred_bridge, pred_drift
 
 
 # 生成样本
 test_num_samples = 25
-test_P2_samples = torch.stack([real_dataset[-i] for i in range(test_num_samples)], dim=0)
-test_P3_samples = torch.stack([fake_dataset[-i] for i in range(test_num_samples)], dim=0)
-test_P1_samples = torch.randn_like(test_P2_samples)
+test_list = []
+test_list = [86,99,103,125,147,151,152,162,178,179,184,186,200,206,220,224,225,241,250,251,253,256,258,271,273]
+test_list = [i-1 for i in test_list]
+test_list.extend([i+250 for i in range(25-len(test_list))])
+print(test_list)
+test_P1_samples = torch.stack([real_dataset[i] for i in test_list], dim=0)
+test_P3_samples = torch.stack([fake_dataset[i] for i in range(test_num_samples)], dim=0)
+test_P2_samples = torch.randn_like(test_P1_samples)
 test_ts, test_bridge, test_drift = gen_2d_data(test_P1_samples, test_P2_samples, epsilon=0.001, T=1)
 
 test_pred_bridges = []
@@ -327,11 +345,11 @@ for chain in infer_chain:
     chain_out = []
     drifts = []
     if chain[0] == 0:
-        temp_src = torch.Tensor(test_P2_samples)
+        temp_src = torch.Tensor(test_P1_samples)  
     elif chain[0] == -1:
         temp_src = torch.Tensor(test_P3_samples)
     elif chain[0] == -2:
-        temp_src = torch.Tensor(test_P1_samples)  
+        temp_src = torch.Tensor(test_P2_samples)
         
         
     for i in chain:
@@ -345,7 +363,7 @@ for chain in infer_chain:
     test_pred_drifts.append(drifts)
 
 def draw_comapre_split(dists, test_pred_bridges):
-    n_sub_interval = len(dists)
+    n_sub_interval = len(dists)-1
     fig, axs = plt.subplots(1, 2, figsize=(5*n_sub_interval, 5))
 
     def plot_test_pred_bridges(sub_axs, data):
